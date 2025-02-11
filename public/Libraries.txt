@@ -1,0 +1,15 @@
+npm i tailwindcss @tailwindcss/vite
+
+npm i firebase
+
+npm i react-router-dom
+
+npm i axios
+
+npm i @redux/toolkit
+
+npm install react-icons
+
+npm install lucide-react
+
+npm i sweetalert2
