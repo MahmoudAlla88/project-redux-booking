@@ -1,105 +1,256 @@
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { auth, database, ref, set, createUserWithEmailAndPassword, signInWithPopup, googleProvider } from '../firebase';
-import Swal from 'sweetalert2';
+import { createSlice } from "@reduxjs/toolkit";
+import {
+  auth,
+  database,
+  ref,
+  set,
+  get,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInWithPopup,
+  googleProvider,
+  signOut,
+} from "../firebase";
+import Swal from "sweetalert2";
+import axios from "axios";
 
-// تسجيل مستخدم جديد
-export const signUpUser = createAsyncThunk(
-  'auth/signUpUser',
-  async ({ fullName, email, phone, password }, { rejectWithValue }) => {
+// ✅ تسجيل الدخول باستخدام Google
+export const signUpWithGoogle = () => async (dispatch) => {
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    const user = result.user;
+
+    // ✅ حفظ بيانات المستخدم في Firebase
+    await set(ref(database, `users/${user.uid}`), {
+      fullName: user.displayName,
+      email: user.email,
+      phone: user.phoneNumber || "",
+    });
+
+    const userData = {
+      uid: user.uid,
+      fullName: user.displayName,
+      email: user.email,
+      phone: user.phoneNumber || "",
+    };
+
+    dispatch({
+      type: "auth/googleSignUpSuccess",
+      payload: userData,
+    });
+
+    Swal.fire({
+      title: "Google Sign-Up Successful!",
+      text: "Redirecting to HomePage...",
+      icon: "success",
+      timer: 2000,
+      showConfirmButton: false,
+    });
+
+    return userData;
+  } catch (error) {
+    Swal.fire("Error!", error.message, "error");
+
+    dispatch({
+      type: "auth/googleSignUpFailure",
+      payload: error.message,
+    });
+
+    return Promise.reject(error); // ✅ Ensure errors are properly returned
+  }
+};
+
+export const signUpUser =
+  ({ fullName, email, phone, password }) =>
+  async (dispatch) => {
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
       const user = userCredential.user;
 
-      // حفظ بيانات المستخدم في قاعدة البيانات
+      // ✅ حفظ بيانات المستخدم في Firebase Realtime Database
       await set(ref(database, `users/${user.uid}`), { fullName, email, phone });
 
+      const userData = { uid: user.uid, fullName, email, phone };
+
+      dispatch({
+        type: "auth/signUpSuccess",
+        payload:  userData ,
+      });
+
       Swal.fire({
-        title: 'Registration Successful!',
-        text: 'Redirecting to login...',
-        icon: 'success',
+        title: "Registration Successful!",
+        text: "Redirecting to Homepage...",
+        icon: "success",
         timer: 2000,
         showConfirmButton: false,
       });
-
-      return { uid: user.uid, fullName, email, phone };
+      return userData;
     } catch (error) {
-      Swal.fire('Error!', error.message, 'error');
-      return rejectWithValue(error.message);
-    }
-  }
-);
+      // ✅ إذا كان البريد الإلكتروني مستخدمًا مسبقًا
+      if (error.code === "auth/email-already-in-use") {
+        Swal.fire({
+          icon: "error",
+          title: "Error!",
+          text: "This email is already in use. Please log in or use another email.",
+        });
+      } else {
+        Swal.fire("Error!", error.message, "error");
+      }
 
-// تسجيل الدخول باستخدام Google
-export const signUpWithGoogle = createAsyncThunk(
-  'auth/signUpWithGoogle',
-  async (_, { rejectWithValue }) => {
+      dispatch({
+        type: "auth/signUpFailure",
+        payload: error.message,
+      });
+
+      return Promise.reject(error); // ✅ Ensure errors are properly returned
+    }
+  };
+
+export const loginUser =
+  ({ email, password }) =>
+  async (dispatch) => {
+    dispatch({ type: "auth/loginRequest" });
+
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const user = result.user;
+      // 🔹 تسجيل الدخول في Firebase Auth
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
+      const user = userCredential.user;
 
-      await set(ref(database, `users/${user.uid}`), {
-        fullName: user.displayName,
-        email: user.email,
-        phone: user.phoneNumber || '',
+      // 🔹 جلب بيانات المستخدم من Realtime Database
+      const userRef = ref(database, `users/${user.uid}`);
+      const snapshot = await get(userRef);
+
+      if (!snapshot.exists()) {
+        throw new Error("User data not found in database.");
+      }
+
+      const userData = snapshot.val();
+
+      // ✅ تحديد الدور بناءً على البريد الإلكتروني
+      const role = userData.email === "admin@gmail.com" ? "Admin" : "User";
+
+      // ✅ تحديث حالة المستخدم في Redux
+      dispatch({
+        type: "auth/loginSuccess",
+        payload: {
+          uid: user.uid,
+          fullName: userData.fullName,
+          email: userData.email,
+          phone: userData.phone,
+          role: role,
+        },
       });
 
+      // ✅ إشعار للمستخدم
       Swal.fire({
-        title: 'Google Sign-Up Successful!',
-        text: 'Redirecting to dashboard...',
-        icon: 'success',
+        title: "Login Successful!",
+        text: "Redirecting to HomePage...",
+        icon: "success",
         timer: 2000,
         showConfirmButton: false,
       });
 
-      return { uid: user.uid, fullName: user.displayName, email: user.email, phone: user.phoneNumber || '' };
+      return userData;
     } catch (error) {
-      Swal.fire('Error!', error.message, 'error');
-      return rejectWithValue(error.message);
-    }
-  }
-);
+      Swal.fire({
+        icon: "error",
+        title: "Login Failed!",
+        text: error.message,
+      });
 
-// إنشاء Slice لإدارة المصادقة
+      dispatch({
+        type: "auth/loginFailure",
+        payload: error.message,
+      });
+
+      return Promise.reject(error); // ✅ Ensure errors are properly returned
+    }
+  };
+
+// ✅ تسجيل الخروج
+export const logoutUser = () => async (dispatch) => {
+  try {
+    await signOut(auth); // 🔹 تسجيل الخروج من Firebase
+    dispatch(logout()); // 🔹 مسح بيانات المستخدم من Redux
+
+    Swal.fire({
+      title: "Logged Out!",
+      text: "You have been successfully logged out.",
+      icon: "success",
+      timer: 2000,
+      showConfirmButton: false,
+    });
+  } catch (error) {
+    Swal.fire("Error!", error.message, "error");
+  }
+};
+
+
+
+
+const storedUser = JSON.parse(localStorage.getItem("user")) || null;
+// ✅ تعريف الـ Slice وإضافة Reducers
 const authSlice = createSlice({
-  name: 'auth',
+  name: "auth",
   initialState: {
-    user: null,
+    user: storedUser,
     loading: false,
     error: null,
   },
   reducers: {
+    loading: (state) => {
+      state.loading = true;
+    },
+    signUpSuccess: (state, action) => {
+      state.user = action.payload;
+      state.loading = false;
+      state.error = null;
+      localStorage.setItem("user", JSON.stringify(action.payload));
+    },
+    signUpFailure: (state, action) => {
+      state.user = null;
+      state.loading = false;
+      state.error = action.payload;
+      localStorage.removeItem("user");
+    },
+    googleSignUpSuccess: (state, action) => {
+      state.user = action.payload;
+      state.loading = false;
+      state.error = null;
+      localStorage.setItem("user", JSON.stringify(action.payload));
+    },
+    googleSignUpFailure: (state, action) => {
+      state.user = null;
+      state.loading = false;
+      state.error = action.payload;
+      localStorage.removeItem("user");
+    },
+    loginSuccess: (state, action) => {
+      state.user = action.payload;
+      state.loading = false;
+      state.error = null;
+      localStorage.setItem("user", JSON.stringify(action.payload));
+    },
+    loginFailure: (state, action) => {
+      state.user = null;
+      state.loading = false;
+      state.error = action.payload;
+      localStorage.removeItem("user");
+    },
     logout: (state) => {
       state.user = null;
+      localStorage.removeItem("user"); 
     },
-  },
-  extraReducers: (builder) => {
-    builder
-      .addCase(signUpUser.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(signUpUser.fulfilled, (state, action) => {
-        state.loading = false;
-        state.user = action.payload;
-      })
-      .addCase(signUpUser.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-      })
-      .addCase(signUpWithGoogle.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(signUpWithGoogle.fulfilled, (state, action) => {
-        state.loading = false;
-        state.user = action.payload;
-      })
-      .addCase(signUpWithGoogle.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-      });
   },
 });
 
-export const { logout } = authSlice.actions;
+export const { logout, loginSuccess } = authSlice.actions;
 export default authSlice.reducer;
